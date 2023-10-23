@@ -13,7 +13,7 @@ root.iconbitmap(default='')
 root.title("TROUBADOR")
 root.attributes('-topmost', True)
 def change_pitch(event):
-    new_pitch = int(pitch_var.get())
+    new_pitch = int(pitch_value.get())
     pitch_label.config(text=f"Pitch: {new_pitch}")
     print(new_pitch)
 def map_piano_note_to_key(note):
