@@ -1,0 +1,437 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import os
+import mido
+import pyautogui                                                  
+import time
+import threading
+
+root = tk.Tk()
+root.title("TROUBADOR")
+root.attributes('-topmost', True)
+
+pitch_value = 0
+file_path = ""
+popup_active = False 
+play_thread = None
+is_playing = False
+is_paused = False
+is_first_note = True
+imported_files = []
+listbox = None  # Variabel global untuk listbox
+last_tick = 0
+processed_messages = []
+def widget_state():
+    spinbox.config(state="disabled")
+
+# def change_pitch(event):
+#     new_pitch = int(pitch_value.get())
+#     pitch_label.config(text=f"Pitch: {new_pitch}")
+#     print(new_pitch)
+def process_midi():
+    # Load the MIDI file
+    global file_path
+    midi = mido.MidiFile(file_path)
+
+    # Define the pitch ranges for easy, medium, and hard levels
+    easy_range = (48, 72)  # Adjust the range as needed
+    medium_range = (60, 84)  # Adjust the range as needed
+    hard_range = (72, 96)  # Adjust the range as needed
+
+    # Iterate through each track in the MIDI file
+    for track in midi.tracks:
+        for msg in track:
+            if msg.type == 'note_on' or msg.type == 'note_off':
+                # Check if the note falls within the hard range
+                if hard_range[0] <= msg.note <= hard_range[1]:
+                    # Modify the note to make it easier (lower the pitch)
+                    msg.note -= 12  # Decrease the note by one octave (12 semitones)
+    
+    # Save the modified MIDI file
+    midi.save("filtered.mid")
+
+def map_piano_note_to_key(note):
+    piano_G = ['f1', 'f2', 'f3']
+    piano_keymap = ['q', '1', 'w', '2', 'e', 'r', '3', 't', '4', 'y', '5',
+    'u', 'i', '6', 'o', '7', 'p', '[', '8', ']', '9', '\\', '0', '-', '=']
+    if not (36 <= note <= 96):
+        return '', ''
+
+    if 36 <= note <= 59:
+        change_G = piano_G[0]
+        baseline = 36
+    elif 60 <= note <= 83:
+        change_G = piano_G[1]
+        baseline = 60
+    else:
+        change_G = piano_G[2]
+        baseline = 84
+    return change_G, piano_keymap[note - baseline]
+def on_closing():
+    global is_playing, play_thread
+    if is_playing:
+        is_playing = False
+        # play_thread.join()
+    print("closed")
+    root.destroy()
+def toggle_play():
+    global is_playing, play_thread, is_paused, last_tick, is_first_note
+    if is_playing:
+        is_playing = False
+        is_paused = True
+        play_button.config(text="▶️Play")
+        loading_label.config(text="-- Stoped --")
+        open_file_button.config(state="normal")
+        spinbox.config(state="normal")
+        print("last tick ", last_tick)
+    else:
+        is_playing = True
+        is_paused = False
+        play_button.config(text="⏸️Pause")
+        play_thread = threading.Thread(target=play_midi)
+        is_first_note = False
+        play_thread.start()
+
+def open_file_dialog():
+    global file_path, popup_active, imported_files, listbox
+    popup_active = False 
+    file_path = filedialog.askopenfilename()
+    popup_active = True
+    if file_path and file_path not in imported_files:
+        imported_files.append(file_path)
+        file_name = os.path.basename(file_path)
+        print("File yang dipilih:", file_name)
+        # listbox.insert(tk.END, file_name)
+        # listbox.insert(tk.END, file_path)
+        label.config(text="imported")
+        spinbox.delete(0, "end")
+        # listbox.delete
+        spinbox.insert(0, 0)
+        
+        save_files()
+        
+
+        load_saved_files()
+def delete_selected_item():
+    global listbox, imported_files
+    selected_indices = listbox.curselection()
+    if selected_indices:
+        for index in selected_indices:
+            selected_item = listbox.get(index)
+            if selected_item in imported_files:
+                imported_files.remove(selected_item)
+            listbox.delete(index)
+            save_files()
+def save_files():
+    with open('midi_files.txt', 'w') as file:
+        for item in imported_files:
+            file.write(item + '\n')
+            
+
+# def load_saved_files():
+#     try:
+#         with open('midi_files.txt', 'r') as file:
+#             for line in file:
+#                 file_name = os.path.basename(line.strip())  # Mengambil hanya nama file tanpa path
+#                 listbox.insert(tk.END, file_name)  # Menambahkan nama file ke listbox
+#                 imported_files.append(line.strip())
+#     except FileNotFoundError:
+#         pass
+def load_saved_files():
+    listbox.delete(0, "end")
+    try:
+        # Load the existing files from the file
+        with open('midi_files.txt', 'r') as file:
+            existing_files = [line.strip() for line in file]
+
+        # Remove duplicates
+        unique_files = list(set(existing_files))
+
+        # Update the listbox and imported_files
+        for file_path in unique_files:
+            listbox.insert(tk.END, file_path)
+            imported_files.append(file_path)
+
+        # Save the updated unique files back to the file
+        with open('midi_files.txt', 'w') as file:
+            file.write('\n'.join(unique_files))
+
+    except FileNotFoundError:
+        pass
+
+    # if file_path and file_path not in imported_files:
+    #     imported_files.append(file_path)
+    #     file_name = os.path.basename(file_path)
+    #     listbox.insert(tk.END, file_name)
+        
+def show_help():
+    help_message = "TROUBADOR Help:\n\n- To change the instrument, select 'Change Instrument' from the menu and choose the desired instrument.\n- To open a MIDI file, click 'Input midi' and select the file.\n\nEnjoy playing music with TROUBADOR!"
+    messagebox.showinfo("Help", help_message)
+def update_loading_label(text):
+    loading_label.config(text=text)
+
+def play_midi():
+    global file_path, is_playing, pitch_value, listbox, is_paused, last_tick, is_first_note, processed_messages, play_state
+    pitch_value = int(spinbox.get())
+    print(pitch_value)
+    selected_item = listbox.get(tk.ACTIVE)
+    print("Selected Item:", selected_item)
+    print("Imported Files:", imported_files)
+    if selected_item:
+        matching_paths = [path for path in imported_files if path == selected_item]
+
+        if matching_paths:
+            file_path = matching_paths[0]
+            print("File Path:", file_path)
+        else:
+            print("File path not found for the selected item.")
+            file_path = None
+    else:
+        file_path = None
+
+
+    if not file_path:
+        print("Pilih file MIDI terlebih dahulu")
+        messagebox.showerror("SHIT", "Please input a midi file!")
+        is_playing = False
+        play_button.config(text="Play")
+        return
+    
+    open_file_button.config(state="disabled")
+    spinbox.config(state="disabled")
+    selected_instrument = instrument_var.get()  # Mendapatkan instrumen yang dipilih
+    if is_paused:
+        for msg in processed_messages:
+            if not is_playing:
+                break
+            if msg.type == 'note_on' and msg.velocity != 0:
+                # Proses pesan MIDI sesuai kebutuhan
+                pitch, key = map_piano_note_to_key(msg.note + pitch_value)
+                if curr_pitch != pitch:
+                    pyautogui.press(pitch)
+                    curr_pitch = pitch
+                pyautogui.press(key)
+                last_tick = msg.time  # Atur waktu terakhir sesuai dengan pesan MIDI ini
+                root.after(0, update_loading_label, "-- Playing --")
+                root.after(0, label.config(text=selected_item))
+
+    try:
+        loading_label.config(text="-- Crafting --")
+        midi = mido.MidiFile(file_path)
+        filename = os.path.basename(file_path)
+        if selected_instrument == "Drum":
+            drum_key_mapping = {
+                36: '1',
+                38: '3',
+                40: '2',
+            }
+
+            cymbal_keys = ['0', '9', '8', '7']
+            try:
+                midi = mido.MidiFile(file_path)
+
+                for msg in midi.play():
+                    if msg.type == 'note_on' and msg.velocity != 0:
+                        note = msg.note
+
+                        # Cek jika catatan ada dalam drum_key_mapping
+                        if note in drum_key_mapping:
+                            key = drum_key_mapping[note]
+                            pyautogui.press(key)
+                        # Cek jika catatan ada dalam cymbal_keys
+                        elif str(note) in cymbal_keys:
+                            pyautogui.press(str(note))
+
+                        time.sleep(msg.time)
+
+            except Exception as e:
+                print(f"Error: {e}")
+
+        # Split the filename into root and extension
+        name, extension = os.path.splitext(filename)
+
+        # Print the name and extension
+        print("Name:", name)
+        print(f"MIDI File parsed.")
+        print(file_path)
+        loading_label.config(text=f"-- Pitch + {pitch_value} --")
+        curr_pitch = 'f2'
+        pyautogui.press(curr_pitch)
+        pyautogui.PAUSE = 0
+        loading_label.config(text="-- Playing --")
+        if check_var.get():
+            selected_items = listbox.get(0, tk.END)
+            current_index = 0
+
+            while current_index < len(selected_items):
+                selected_item = selected_items[current_index]
+                matching_paths = [path for path in imported_files if path == selected_item]
+
+                if not matching_paths:
+                    # Move to the next item if the current one is not found
+                    current_index += 1
+                    continue
+
+                file_path = matching_paths[0]
+                print("File Path:", file_path)
+
+                try:
+                    midi = mido.MidiFile(file_path)
+                except Exception as e:
+                    print(f"Error loading MIDI file: {e}")
+                    # Move to the next item if an exception occurs
+                    current_index += 1
+                    continue
+
+                for msg in midi.play():
+                    filename = os.path.basename(file_path)
+                    name, extension = os.path.splitext(filename)
+                    if not is_playing:
+                        break
+                    if is_paused:
+                        # Tambahkan pesan MIDI ke daftar pesan yang sudah diproses
+                        processed_messages.append(msg)
+                        continue 
+                    if msg.type == 'note_on' and msg.velocity != 0:
+                        pitch, key = map_piano_note_to_key(msg.note + pitch_value)
+                        if curr_pitch != pitch:
+                            pyautogui.press(pitch)
+                            curr_pitch = pitch
+                        pyautogui.press(key)
+                    
+                    root.after(0, update_loading_label, "-- Playing aLL --")
+                    root.after(0, label.config(text=name))
+
+                # Move to the next item
+                current_index += 1
+
+        else:
+            print("not checked")
+            # is_paused = False
+ 
+            for msg in midi.play():
+                if not is_playing:
+                    break
+                if is_paused:
+                    # Tambahkan pesan MIDI ke daftar pesan yang sudah diproses
+                    processed_messages.append(msg)
+                    continue 
+                        # is_paused = False
+                    # last_tick = msg.time  # Simpan posisi terakhir
+                    # print("\n\n",last_tick,"\n\n......")
+                if msg.type == 'note_on' and msg.velocity != 0:
+                    if is_first_note:
+                        last_tick = msg.time
+                        is_first_note = False
+                    else:
+                        time_diff = msg.time - last_tick
+                        # time.sleep(time_diff)
+                    pitch, key = map_piano_note_to_key(msg.note + pitch_value)
+                    if curr_pitch != pitch:
+                        pyautogui.press(pitch)
+                        curr_pitch = pitch
+                    
+                    # msg.time += last_tick
+                    pyautogui.press(key)
+                    print(msg.note," | ",msg.time," | ",last_tick," | ")
+                    last_tick = msg.time
+                root.after(0, update_loading_label, "-- Playing --")
+                root.after(0, label.config(text=name))
+            is_playing = False
+            play_button.config(text="▶️Play")
+            loading_label.config(text="-- Finish --")
+    except OSError as e:
+        print(e)
+        # messagebox.showerror("Error", "Midi File is broken. Please choose another file!.")
+        # selected_indices = listbox.curselection()
+
+        # if selected_indices:
+        #     selected_item = listbox.get(selected_index)
+        #     imported_files.remove(selected_item)
+        #     listbox.delete(selected_index)
+        # save_files()
+        # load_saved_files()
+        loading_label.config(text="-- Error --")
+        open_file_button.config(state="normal")
+        spinbox.config(state="normal")
+        play_button.config(text="▶️Play")
+        loading_label.config(text="--  --")
+        is_playing = False
+def play_midi_instrument():
+    pass
+def update_popup_position():
+    if not popup_active:
+        root.update()
+        return 
+    root.after(10, update_popup_position)
+def set_instrument(instrument):
+    instrument_var.set(instrument)
+
+menubar = tk.Menu(root)
+root.config(menu=menubar)
+
+# Membuat menu "Change Instrument"
+change_instrument_menu = tk.Menu(menubar, tearoff=0)
+menubar.add_cascade(label="🛠️ Change Instrument", menu=change_instrument_menu)
+instrument_var = tk.StringVar(root)
+change_instrument_menu.add_command(label="🎹 Piano", command=lambda: set_instrument("Piano"))
+change_instrument_menu.add_command(label="🎸 Guitar/accordion/bass, etc", command=lambda: set_instrument("Guitar"))
+change_instrument_menu.add_command(label="🎼 Keytar", command=lambda: set_instrument("Keytar"))
+change_instrument_menu.add_command(label="🥁 Drum", command=lambda: set_instrument("Drum"))
+
+help_menu = tk.Menu(menubar, tearoff=0)
+menubar.add_cascade(label="ℹ️ Help", menu=help_menu)
+help_menu.add_command(label="Show Help", command=show_help)
+
+open_file_button = tk.Button(root, text="📂 Import midi", command=open_file_dialog)
+open_file_button.grid(row=1, column=0, sticky='w', padx=20, pady=(20, 10))
+
+delete_button = tk.Button(root, text="♻️ Delete Selected", command=delete_selected_item)
+delete_button.grid(row=1, column=1, padx=20, pady=(20, 10))
+
+listbox = tk.Listbox(root, height=4, width=80)  # Tinggi 4 baris, lebar 30 karakter
+listbox.grid(row=2, column=0, padx=20, sticky='nsew', columnspan=2)
+
+# Membuat scrollbar vertikal dan menghubungkannya ke listbox
+vertical_scrollbar = tk.Scrollbar(root, orient=tk.VERTICAL, command=listbox.yview)
+vertical_scrollbar.grid(row=2, column=2, sticky='ns')
+listbox.config(yscrollcommand=vertical_scrollbar.set)
+
+# Membuat scrollbar horizontal dan menghubungkannya ke listbox
+horizontal_scrollbar = tk.Scrollbar(root, orient=tk.HORIZONTAL, command=listbox.xview)
+horizontal_scrollbar.grid(row=3, column=0, sticky='ew', columnspan=2)
+listbox.config(xscrollcommand=horizontal_scrollbar.set)
+
+label = tk.Label(root, text="--")
+label.grid(row=7, column=0, sticky='w', padx=20, columnspan=10)
+
+pitch_label = tk.Label(root, text=f"Set pitch")
+pitch_label.grid(row=4, column=0, sticky='w', padx=20)
+
+spinbox = tk.Spinbox(root, from_=-12, to=24, increment=1, width=5)
+spinbox.grid(row=4, column=1, sticky='w', padx=20,pady=20)
+# spinbox.bind("<FocusOut>", change_pitch)
+
+spinbox.delete(0, 'end')
+spinbox.insert(0, "0")
+
+check_var = tk.IntVar()
+check_button = tk.Checkbutton(root, text="Select all n play them", variable=check_var)
+check_button.grid(row=5, column=0, sticky='w', padx=20)
+
+check_loopVar = tk.IntVar()
+check_loop = tk.Checkbutton(root, text="🔁Loop", variable=check_loopVar)
+check_loop.grid(row=5, column=1, sticky='w', padx=20)
+# check_var.trace("w", lambda name, index, mode, sv=check_var: on_checkbox_change())
+play_button = tk.Button(root, text="▶️Play", command=toggle_play)
+play_button.grid(row=6, column=0, sticky='w', padx=20, pady=20)
+
+loading_label = tk.Label(root, text=" -- ")
+loading_label.grid(row=6, column=1, sticky='w', columnspan=2)
+
+midi_player = None
+root.protocol("WM_DELETE_WINDOW", on_closing)
+root.geometry("820x440")#520x440  
+load_saved_files()
+root.mainloop()
+# -------------------------------------------------------1113131
